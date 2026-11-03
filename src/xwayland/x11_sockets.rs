@@ -145,7 +145,17 @@ fn open_x11_sockets_for_display(
     let _ = ::std::fs::remove_file(&path);
     // We know this path is not too long, these unwrap cannot fail
     let fs_addr = SocketAddrUnix::new(path.as_bytes()).unwrap();
-    let mut sockets = vec![open_socket(fs_addr)?];
+    let mut sockets = Vec::new();
+    match open_socket(fs_addr) {
+        Ok(socket) => sockets.push(socket),
+        // A read-only or foreign-owned /tmp/.X11-unix (WSLg mounts it read-only): X clients on Linux try the
+        // abstract socket first, so an abstract-only server is still reachable through DISPLAY=:N.
+        Err(err) if open_abstract_socket && matches!(err, Errno::ROFS | Errno::ACCESS | Errno::PERM) => {
+            let number = display;
+            warn!(number, "Filesystem X11 socket unavailable ({err}); serving the abstract socket only");
+        }
+        Err(err) => return Err(err),
+    }
     if open_abstract_socket {
         let abs_addr = SocketAddrUnix::new_abstract_name(path.as_bytes()).unwrap();
         sockets.push(open_socket(abs_addr)?);
